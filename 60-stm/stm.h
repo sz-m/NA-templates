@@ -1,5 +1,6 @@
 #pragma once
 
+#include <type_traits>
 #include <boost/variant.hpp>
 
 struct swallow
@@ -61,5 +62,42 @@ template<typename T>
 using remove_cvref_t = std::remove_cv_t<std::remove_reference_t<T>>;
 
 template<typename... States>
-class state_machine;
+class state_machine
+{
+public:
+  template<typename InitState, typename = typename std::enable_if<
+      std::disjunction<
+        std::is_same<remove_cvref_t<InitState>, States>...
+      >::value
+    >::type>
+  state_machine(InitState && state) : _state{std::forward<InitState>(state)}
+  {
+  }
 
+  template<typename State>
+  bool is_active() const
+  {
+    return _state.which() == index_of<State, States...>;
+  }
+
+  template<typename Event>
+  void raise(Event && event = Event{})
+  {
+    boost::apply_visitor(
+      make_overload_set(
+        [&](auto && state) -> decltype(state.handle(event), void()) {
+          _state = state.handle(event);
+        },
+
+        [](auto &&... state) {
+          swallow{state...};
+          throw invalid_transition{};
+        }
+      ),
+      _state
+    );
+  }
+
+private:
+  boost::variant<States...> _state;
+};
